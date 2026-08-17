@@ -1,0 +1,109 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-atoms}
+      POSTGRES_USER: ${POSTGRES_USER:-atoms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atoms-local-password}
+    volumes:
+      - atoms_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  cloud-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: atoms_cloud
+      POSTGRES_USER: cloud
+      POSTGRES_PASSWORD: ${CLOUD_POSTGRES_PASSWORD:-cloud-local-password}
+    volumes:
+      - atoms_cloud_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloud -d atoms_cloud"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  cloud:
+    build: ./cloud
+    environment:
+      CLOUD_DATABASE_URL: postgresql://cloud:${CLOUD_POSTGRES_PASSWORD:-cloud-local-password}@cloud-db:5432/atoms_cloud
+      CLOUD_API_KEY: ${CLOUD_API_KEY:-atoms-cloud-local-key}
+      CLOUD_DOCKER_NETWORK: atoms-cloud-net
+      CLOUD_PUBLIC_HOST: ${CLOUD_PUBLIC_HOST:-localhost}
+      CLOUD_WORKSPACE_ROOT: /workspaces
+      CLOUD_DATA_ROOT: /cloud/data
+      CLOUD_APP_MEMORY_LIMIT: ${CLOUD_APP_MEMORY_LIMIT:-768m}
+      CLOUD_DATABASE_MEMORY_LIMIT: ${CLOUD_DATABASE_MEMORY_LIMIT:-512m}
+      CLOUD_APP_CPU_LIMIT: ${CLOUD_APP_CPU_LIMIT:-1.5}
+      CLOUD_DATABASE_CPU_LIMIT: ${CLOUD_DATABASE_CPU_LIMIT:-1.0}
+      CLOUD_PUBLISHED_PORT_START: ${CLOUD_PUBLISHED_PORT_START:-20000}
+      CLOUD_PUBLISHED_PORT_END: ${CLOUD_PUBLISHED_PORT_END:-45000}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - atoms_workspaces:/workspaces:ro
+      - atoms_cloud_data:/cloud/data
+    depends_on:
+      cloud-db:
+        condition: service_healthy
+    networks:
+      - default
+      - cloud-runtime
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-atoms}:${POSTGRES_PASSWORD:-atoms-local-password}@db:5432/${POSTGRES_DB:-atoms}
+      WORKSPACE_ROOT: /app/workspaces
+      PUBLIC_APP_URL: http://localhost:${APP_PORT:-3000}
+      CLOUD_BASE_URL: http://cloud:8100
+      CLOUD_API_KEY: ${CLOUD_API_KEY:-atoms-cloud-local-key}
+    volumes:
+      - atoms_workspaces:/app/workspaces
+    depends_on:
+      db:
+        condition: service_healthy
+      cloud:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "${APP_PORT:-3000}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  atoms_postgres:
+  atoms_workspaces:
+  atoms_cloud_postgres:
+  atoms_cloud_data:
+
+networks:
+  cloud-runtime:
+    name: atoms-cloud-net
