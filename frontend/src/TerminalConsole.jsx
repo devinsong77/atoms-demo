@@ -23,7 +23,7 @@ export default function TerminalConsole({ containerId, theme = 'dark' }) {
     terminal.loadAddon(fit)
     terminal.open(hostRef.current)
     fit.fit()
-    terminal.write('\x1b[90mConnecting to Docker exec shell…\x1b[0m\r\n')
+    terminal.write('\x1b[90mConnecting to terminal…\x1b[0m\r\n')
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const token = localStorage.getItem('atoms_token') || ''
     const socket = new WebSocket(`${protocol}//${location.host}/api/cloud/containers/${containerId}/terminal?token=${encodeURIComponent(token)}`)
